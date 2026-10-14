@@ -18,6 +18,7 @@ import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.server.ServerLifecycleHooks;
 import org.slf4j.Logger;
 
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -52,6 +53,14 @@ public class AuthEventHandler {
         String username = player.getGameProfile().getName().toLowerCase(Locale.ROOT);
         LOGGER.info("[AuthMod] Player joined: {}", username);
 
+        // Players verified by Mojang (online-mode) never have an offline-derived UUID,
+        // so they skip password auth entirely. Only offline-UUID players are gated.
+        if (!isOfflineUuid(player)) {
+            authenticatedPlayers.put(username, true);
+            LOGGER.info("[AuthMod] {} has a verified (non-offline) UUID, skipping password auth", username);
+            return;
+        }
+
         authenticatedPlayers.put(username, false);
         LoginLimiter.reset(username);
         lastPosition.put(player, new double[]{player.getX(), player.getY(), player.getZ()});
@@ -59,6 +68,17 @@ public class AuthEventHandler {
         lockPlayer(player);
         syncInventoryMenu(player);
         sendAuthMessage(player, Lang.joinLocale(player));
+    }
+
+    /**
+     * True if the player's UUID is the vanilla offline-mode UUID derived from their name,
+     * i.e. they were NOT authenticated by Mojang. Offline UUIDs are
+     * UUID.nameUUIDFromBytes("OfflinePlayer:" + name).
+     */
+    public static boolean isOfflineUuid(ServerPlayer player) {
+        String name = player.getGameProfile().getName();
+        UUID offline = UUID.nameUUIDFromBytes(("OfflinePlayer:" + name).getBytes(StandardCharsets.UTF_8));
+        return offline.equals(player.getUUID());
     }
 
     @SubscribeEvent
@@ -238,6 +258,7 @@ public class AuthEventHandler {
 
     /** Повторная блокировка онлайн-игрока (например, после сброса пароля админом). */
     public static void forceRelock(ServerPlayer player) {
+        if (!isOfflineUuid(player)) return; // verified premium players are never re-locked
         String username = player.getGameProfile().getName().toLowerCase(Locale.ROOT);
         authenticatedPlayers.put(username, false);
         LoginLimiter.reset(username);
